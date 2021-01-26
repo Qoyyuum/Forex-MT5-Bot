@@ -1,0 +1,3 @@
+ACCOUNT=25115284
+PASSWORD="4zatlbqx"
+SERVER="MetaQuotes-Demo"
