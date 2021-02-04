@@ -3,6 +3,7 @@ import config
 import pandas as pd
 import datetime
 import logging
+import pytz
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -11,7 +12,10 @@ print(f"Metatrader5 package author: {mt5.__author__}")
 print(f"Metatrader5 package version: {mt5.__version__}")
 
 # Date 10 days ago
-utc_from=datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=10)
+# utc_from=datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=365)
+timezone = pytz.timezone("Etc/UTC")
+utc_from = datetime.datetime(2021,1,1,tzinfo=timezone)
+utc_to = datetime.datetime(2021,1,28,tzinfo=timezone)
 
 
 def start():
@@ -30,22 +34,22 @@ def start():
         exit()
 
     # display data on connection status, server name and trading account
-    print(mt5.terminal_info())
+    # print(mt5.terminal_info())
     # display data on MetaTrader 5 version
     print(mt5.version())
 
     # display account info
-    print("Account Info")
-    account_info_dict=mt5.account_info()._asdict()
+    # print("Account Info")
+    # account_info_dict=mt5.account_info()._asdict()
 
-    print(f"Total of Orders: {mt5.orders_total}")
     # for prop in account_info_dict:
     #     print(f" {prop}={account_info_dict[prop]}")
+    # print(f"Total of Orders: {mt5.orders_total}")
 
-    infoDataFrame(account_info_dict,c=['property', 'value'])
+    # infoDataFrame(account_info_dict,c=['property', 'value'])
     
     # List of pairs to get
-    # pairs = "*USD*,*EUR*,*JPY*,*SGD*,*GBP*,*CAD*"
+    pairs = "*USD*,*EUR*,*JPY*,*SGD*,*GBP*,*CAD*"
     # getSymbols(pairs)
     
     # Get a symbol's info
@@ -53,18 +57,31 @@ def start():
         "EURJPY",
         # "USDCAD"
         ]
-    for p in pairs:
-        getSymbolInfo(p)
-        # copyRates(p)
+    # for p in pairs:
+        # getSymbolInfo(p)
+        # copyRates(pair=p)
         # copyAllTicks(p)
-    exit()
+        # buy(p, 1.0)
+
+    rates = mt5.copy_rates_from_pos("EURJPY", mt5.TIMEFRAME_M1, 0, 100)
+    print(rates)
+
+    # exit()
+
+def testCopyRates():
+    """
+    Test Copying Rate and save it into a file to manipulate with.
+    """
+    with open("EURJPY-rates.json", "w") as f:
+        rates = mt5.copy_rates_from_pos("EURJPY", mt5.TIMEFRAME_M1, 0, 100)
+        # if mt5.last_error()
+        f.write(str(rates))
+        # print(f"RATES: {rates}")
+        print("Finished rates!")
 
 def getSymbols(search):
     symbols=mt5.symbols_get(group=search)
-    if symbols>0:
-        print(f"Total symbols={symbols}")
-    else:
-        print("Symbols not found")
+    print(f"Searched pairs:\n{s.name for s in symbols}")
 
 def getSymbolInfo(pair):
     # Attempt to enable the display of the selected pair symbol in MarketWatch
@@ -77,13 +94,8 @@ def getSymbolInfo(pair):
     symbol_info = mt5.symbol_info(pair)
     if symbol_info!=None:
         print("Showing Symbol's Info:\n")
-        # for prop in symbol_info._asdict():
-        #     print(f"    {prop}={symbol_info._asdict()[prop]}")
 
-        # convert the dictionary into DataFrame and print
         symbol_info_dict = symbol_info._asdict()
-        # df=pd.DataFrame(list(symbol_info_dict.items()),columns=['property','value'])
-        # print(df)
         infoDataFrame(symbol_info_dict,c=['property', 'value'])
 
     print(f"!!!!!!!!!{pair} LAST TICK!!!!!!!!!!!!!")
@@ -100,7 +112,7 @@ def infoDataFrame(l, c):
     df=pd.DataFrame(list(l.items()),columns=c)
     print(df)
 
-def copyRates(pair, timeframe=mt5.TIMEFRAME_M1, from_date=utc_from, count=10):
+def copyRates(pair, timeframe=mt5.TIMEFRAME_M1, from_date=utc_from, count=1000):
     """
     Gets the historical symbol's data.
 
@@ -117,9 +129,11 @@ def copyRates(pair, timeframe=mt5.TIMEFRAME_M1, from_date=utc_from, count=10):
     # Set up for displaying the data in a proper tabular form
     pd.set_option('display.max_columns', 500)
     pd.set_option('display.width', 1500)
-    
-    rates = mt5.copy_rates_from(pair, timeframe, from_date, 10)
+    print(f"Copying rates from : {pair} at {timeframe} starting from {from_date} and will collect {count} bars")
+    rates = mt5.copy_rates_from(pair, timeframe, from_date, count)
     rates_frame = pd.DataFrame(rates)
+    print("DataFrame :")
+    print(f"{rates_frame}")
     rates_frame['time']=pd.to_datetime(rates_frame['time'], unit='s')
     print(f"\nDisplaying Rates for {pair}")
     print(rates_frame)
@@ -149,10 +163,14 @@ def copyAllTicks(pair, from_date=utc_from, count=10, flag="mt5.COPY_TICKS_ALL"):
     print(ticks_frame)
 
 
-def buy(pair):
+def buy(pair, lots):
     """
-    Check if the order request is a valid request before attempting to send the order through.
-    Parameters are in kwargs which accepts a JSON request.
+    First checks if the order request is valid and then pass in the request object
+    and execute the order for a buy.
+
+    :params pair - string - symbol to place a buy order
+    :params lots - float - value for amount of lots
+    :return boolean
 
     E.g.
     request = {
@@ -171,14 +189,66 @@ def buy(pair):
     }
     """
     point = mt5.symbol_info(pair).point
+    price = mt5.symbol_info_tick(pair).ask
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
         "symbol": pair,
+        "volume": lots,
+        "type": mt5.ORDER_TYPE_BUY,
+        "price": price,
+        "sl": price-100*point,
+        "tp": price+100*point,
+        "deviation": 10,
+        "magic": 234000,
+        "comment": "Test script",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_RETURN,
+    }
+    print(f"Check: {mt5.order_check(request)}")
+
+    result = mt5.order_send(request)
+    if result.retcode == mt5.TRADE_RETCODE_DONE:
+        print(f"Result: {result}")
+    else:
+        print("!!!!!!!!!!!!ORDER_SEND FAILED!!!!!!!!!")
+        print(f"Error: {result.retcode}")
+        print(f"Result: {result}")
+
+def buy(pair, lots):
+    """
+    First checks if the order request is valid and then pass in the request object
+    and execute the order for a buy.
+
+    :params pair - string - symbol to place a buy order
+    :params lots - float - value for amount of lots
+    :return boolean
+
+    E.g.
+    request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": symbol,
         "volume": 1.0,
         "type": mt5.ORDER_TYPE_BUY,
         "price": mt5.symbol_info_tick(symbol).ask,
         "sl": mt5.symbol_info_tick(symbol).ask-100*point,
         "tp": mt5.symbol_info_tick(symbol).ask+100*point,
+        "deviation": 10,
+        "magic": 234000,
+        "comment": "python script",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_RETURN,
+    }
+    """
+    point = mt5.symbol_info(pair).point
+    price = mt5.symbol_info_tick(pair).ask
+    request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": pair,
+        "volume": lots,
+        "type": mt5.ORDER_TYPE_BUY,
+        "price": price,
+        "sl": price-100*point,
+        "tp": price+100*point,
         "deviation": 10,
         "magic": 234000,
         "comment": "Test script",
