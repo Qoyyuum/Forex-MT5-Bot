@@ -34,6 +34,11 @@ MetaTrader5 = "==5.0.33"
 Pillow = "==8.1.0"
 
 [dev-packages]
+black = "*"
+ipykernel = "*"
 
 [requires]
 python_version = "3.9"
+
+[pipenv]
+allow_prereleases = true
