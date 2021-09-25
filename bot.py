@@ -184,9 +184,8 @@ def main():
 
 
 if __name__ == "__main__":
-    while True:
-        try:
-            main()
-        except (KeyboardInterrupt, SystemExit):
-            logger.critical("Manually quit the program")
-            raise
+    try:
+        main()
+    except (KeyboardInterrupt, SystemExit):
+        logger.critical("Manually quit the program")
+        raise
