@@ -1,8 +1,18 @@
-version: '3.4'
+version: "3.4"
 
 services:
-  forexzmq:
-    image: forexzmq
+  forexbot:
+    image: forexbot
     build:
       context: .
       dockerfile: ./Dockerfile
+
+  mt5:
+    image: solarkennedy/win-x11-novnc-docker
+    ports:
+      - 8080:8080
+    volumes:
+      - "installer:/root/prefix64/drive_c/Program Files/MetaTrader"
+
+volumes:
+  installer: {}

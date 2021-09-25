@@ -1,0 +1,12 @@
+version: "3.3"
+services:
+  mt5:
+    image: solarkennedy/wine-x11-novnc-docker
+    ports:
+      - "8081:8080"
+    environment:
+      WINEPREFIX: "/root/prefix64"
+      WINEARCH: win64
+    volumes:
+      - "./XM Global MT5:/root/prefix64/drive_c/Program Files/XM Global MT5"
+      - "./supervisord.conf:/etc/supervisor/conf.d/supervisord.conf"

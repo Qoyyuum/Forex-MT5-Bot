@@ -1,0 +1,1 @@
+*/1 * * * 1-5 docker run --rm forexbot:1.0.0
