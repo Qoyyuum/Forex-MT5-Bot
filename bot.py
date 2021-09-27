@@ -41,10 +41,11 @@ class Client:
             )
             return False
 
-    def analyze_and_trade(self):
+    def analyze_and_trade(self, rates: None):
         """Analyze the past 100 rates and trade on the current open price"""
-        rates = mt5.copy_rates_from_pos(self.pair, self.timeframe, 1, 100)
-        logger.debug(f"Fetched rates for {self.pair} :\n{rates}")
+        while rates is None:
+            rates = mt5.copy_rates_from_pos(self.pair, self.timeframe, 1, 500)
+            logger.debug(f"Fetched rates for {self.pair} :\n{rates}")
 
         df_data = pd.DataFrame(rates)
         df_x = df_data.drop(columns="close")
@@ -162,7 +163,7 @@ class Client:
         logger.debug(f"Checking pair: {self.pair}")
         pos = mt5.positions_get(symbol=self.pair)
         logger.debug(f"{pos}")
-        return len(pos) == 0
+        return pos is None or len(pos) == 0
 
 
 def main():
@@ -180,7 +181,7 @@ def main():
                 config.TIMEFRAME,
             )
             if c.login() and c.check_existing_positions():
-                c.analyze_and_trade()
+                c.analyze_and_trade(rates=None)
 
 
 if __name__ == "__main__":
