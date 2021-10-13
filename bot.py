@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import MetaTrader5 as mt5
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
 
 import config
 
@@ -38,6 +37,45 @@ class Client:
             )
             return False
 
+    def build_dataset(self, df_data):
+        """Split a dataframe and split the dataset to train a model"""
+        from sklearn.model_selection import train_test_split
+
+        df_x = df_data.drop(columns="close")
+        df_y = df_data["close"]
+        df_y = df_y.drop(1, 0, inplace=True)  # Remove the first row
+
+        x_train, _xtest, y_train, _ytest = train_test_split(
+            df_x, df_y, test_size=0.2, random_state=42, shuffle=True
+        )
+
+        return x_train, y_train
+
+    def determine_signal(
+        self, open_price: float, predicted_price: float
+    ) -> None:
+        """Determine the trading signal based on which price is higher or lower"""
+        if open_price > predicted_price:
+            logger.debug(
+                f"Sell at {open_price} with predicted take profit {predicted_price}"
+            )
+            self.stop_loss = self.get_stop_loss(
+                mt5.symbol_info_tick(self.pair).bid, predicted_price
+            )
+            self.order("sell")
+        elif open_price < predicted_price:
+            logger.debug(
+                f"Buy at {open_price} with predicted take profit {predicted_price}"
+            )
+            self.stop_loss = self.get_stop_loss(
+                mt5.symbol_info_tick(self.pair).ask, predicted_price
+            )
+            self.order("buy")
+        else:
+            logger.warn(
+                "Miraculously the open price and the predicted price are exactly the same. Not sure what to do"
+            )
+
     def analyze_and_trade(self, rates: np.ndarray) -> None:
         """Analyze the past 100 rates and trade on the current open price"""
         while rates is None:
@@ -46,41 +84,12 @@ class Client:
             )
             logger.debug(f"Fetched rates for {self.pair} :\n{rates}")
 
-        df_data = pd.DataFrame(rates)
-        df_x = df_data.drop(columns="close")
-        df_y = df_data["close"]
-
-        x_train, x_test, y_train, y_test = train_test_split(
-            df_x, df_y, test_size=0.2, random_state=0
-        )
-        # logger.debug(f"x_train :\n{x_train}")
-        # logger.debug(f"x_test :\n{x_test}")
-        # logger.debug(f"y_train :\n{y_train}")
-        # logger.debug(f"y_test :\n{y_test}")
+        x_train, y_train = self.build_dataset(pd.DataFrame(rates))
         model = self.get_model_to_predict(x_train, y_train)
         logger.debug(f"Trained Model:\n{model}")
         current_open_price, to_predict = self.get_current_rate_to_predict()
         self.y_predict = model.predict(to_predict)
-        if current_open_price > float(self.y_predict[0]):
-            logger.debug(
-                f"Sell at {current_open_price} with predicted take profit {float(self.y_predict[0])}"
-            )
-            self.stop_loss = self.get_stop_loss(
-                mt5.symbol_info_tick(self.pair).bid, float(self.y_predict[0])
-            )
-            self.order("sell")
-        elif current_open_price < float(self.y_predict[0]):
-            logger.debug(
-                f"Buy at {current_open_price} with predicted take profit {float(self.y_predict[0])}"
-            )
-            self.stop_loss = self.get_stop_loss(
-                mt5.symbol_info_tick(self.pair).ask, float(self.y_predict[0])
-            )
-            self.order("buy")
-        else:
-            logger.warn(
-                "Miraculously the open price and the predicted price are exactly the same. Not sure what to do"
-            )
+        self.determine_signal(current_open_price, float(self.y_predict[0]))
 
     def get_stop_loss(
         self, open_price: float, predicted_price: float
@@ -148,6 +157,7 @@ class Client:
             if signal == "sell"
             else (mt5.ORDER_TYPE_BUY, symbol_info_tick.ask)
         )
+        # TODO: get history order of the pair and if it hit a stop loss, increment lot size by double, else, remain as is.
         self.raw_order(
             action=mt5.TRADE_ACTION_DEAL,
             symbol=self.pair,
@@ -155,7 +165,7 @@ class Client:
             type=order_type,
             price=price,
             tp=float(self.y_predict[0]),
-            sl=float(self.stop_loss),
+            # sl=float(self.stop_loss),
             deviation=20,
             magic=20210927,
             comment=config.COMMENT,
@@ -172,8 +182,6 @@ class Client:
         result = (
             mt5.order_check(kwargs) if config.DEBUG else mt5.order_send(kwargs)
         )
-        while result.retcode == mt5.TRADE_RETCODE_INVALID_STOPS:
-            self.analyze_and_trade()
         if result.retcode != mt5.TRADE_RETCODE_DONE:
             logger.error(
                 f"Order Send Failed for {self.pair}, RETCODE = {result.retcode}"
@@ -211,6 +219,12 @@ def main() -> None:
             )
             if c.login() and c.check_existing_positions():
                 c.analyze_and_trade(rates=None)
+            # if c.login():
+            #     from datetime import datetime
+            #     from_date=datetime(2021,9,30)
+            #     to_date=datetime.now()
+            #     history_orders = mt5.history_orders_get(from_date, to_date, group=p)
+            #     print(history_orders)
 
 
 if __name__ == "__main__":
