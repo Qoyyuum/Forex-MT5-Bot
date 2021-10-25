@@ -1,6 +1,8 @@
 import logging
 import logging.config
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any
 
 import MetaTrader5 as mt5
 import numpy as np
@@ -15,6 +17,16 @@ logger = logging.getLogger("app" if config.DEBUG else "root")
 
 @dataclass
 class Client:
+    __slots__ = [
+        "account",
+        "password",
+        "server",
+        "pair",
+        "lot",
+        "timeframe",
+        "y_predict",
+        "stop_loss",
+    ]
     account: int
     password: str
     server: str
@@ -37,23 +49,9 @@ class Client:
             )
             return False
 
-    def build_dataset(self, df_data):
-        """Split a dataframe and split the dataset to train a model"""
-        from sklearn.model_selection import train_test_split
-
-        df_x = df_data.drop(columns="close")
-        df_y = df_data["close"]
-        df_y = df_y.drop(1, 0, inplace=True)  # Remove the first row
-
-        x_train, _xtest, y_train, _ytest = train_test_split(
-            df_x, df_y, test_size=0.2, random_state=42, shuffle=True
-        )
-
-        return x_train, y_train
-
     def determine_signal(
         self, open_price: float, predicted_price: float
-    ) -> None:
+    ) -> Any:
         """Determine the trading signal based on which price is higher or lower"""
         if open_price > predicted_price:
             logger.debug(
@@ -62,7 +60,7 @@ class Client:
             self.stop_loss = self.get_stop_loss(
                 mt5.symbol_info_tick(self.pair).bid, predicted_price
             )
-            self.order("sell")
+            return self.order("sell")
         elif open_price < predicted_price:
             logger.debug(
                 f"Buy at {open_price} with predicted take profit {predicted_price}"
@@ -70,45 +68,73 @@ class Client:
             self.stop_loss = self.get_stop_loss(
                 mt5.symbol_info_tick(self.pair).ask, predicted_price
             )
-            self.order("buy")
+            return self.order("buy")
         else:
             logger.warn(
                 "Miraculously the open price and the predicted price are exactly the same. Not sure what to do"
             )
+        return False
 
-    def analyze_and_trade(self, rates: np.ndarray) -> None:
-        """Analyze the past 100 rates and trade on the current open price"""
+    def build_dataset(
+        self, df_data: np.ndarray, lookup_data: int = 1
+    ) -> tuple[Any, Any]:
+        """Split a dataframe and split the dataset to train a model"""
+        from sklearn.model_selection import train_test_split
+
+        df_data["adjclose"] = df_data["close"].shift(
+            periods=-lookup_data, fill_value=0
+        )
+        df_x = df_data.drop(columns="adjclose")
+
+        x_train, _xtest, y_train, _ytest = train_test_split(
+            df_x,
+            df_data["adjclose"],
+            test_size=0.2,
+            random_state=42,
+            shuffle=True,
+        )
+
+        return x_train, y_train
+
+    def analyze_and_trade(
+        self, rates: np.ndarray = None, current_rates: np.ndarray = None
+    ) -> None:
+        """Analyze the past X rates and trade on the current open price. X rates is configured by BARS_TO_TRAIN."""
         while rates is None:
             rates = mt5.copy_rates_from_pos(
                 self.pair, self.timeframe, 1, config.BARS_TO_TRAIN
             )
-            logger.debug(f"Fetched rates for {self.pair} :\n{rates}")
+
+        while current_rates is None:
+            current_rates = mt5.copy_rates_from_pos(
+                self.pair, self.timeframe, 0, 1
+            )
 
         x_train, y_train = self.build_dataset(pd.DataFrame(rates))
         model = self.get_model_to_predict(x_train, y_train)
-        logger.debug(f"Trained Model:\n{model}")
-        current_open_price, to_predict = self.get_current_rate_to_predict()
+        current_open_price, to_predict = self.get_current_rate_to_predict(
+            current_rates
+        )
         self.y_predict = model.predict(to_predict)
-        self.determine_signal(current_open_price, float(self.y_predict[0]))
+        return self.determine_signal(
+            current_open_price, float(self.y_predict[0])
+        )
 
     def get_stop_loss(
         self, open_price: float, predicted_price: float
     ) -> float:
         if open_price > predicted_price:
-            return open_price + ((open_price - predicted_price) * 2)
+            return open_price + ((open_price - predicted_price))
         else:
-            return open_price - ((predicted_price - open_price) * 2)
+            return open_price - ((predicted_price - open_price))
 
-    def get_current_rate_to_predict(self):
+    def get_current_rate_to_predict(self, current_rate: np.ndarray = None):
         """
         Get the current rate, and open price
         """
-        current_rate = mt5.copy_rates_from_pos(
-            self.pair, config.TIMEFRAME, 0, 1
-        )
         current_df = pd.DataFrame(current_rate)
         current_open_price = current_df.iloc[0]["open"]
-        return current_open_price, current_df.drop(columns="close")
+        return current_open_price, current_df
 
     def get_model_to_predict(self, x_train, y_train):
         """
@@ -122,7 +148,32 @@ class Client:
 
         return LinearRegression().fit(x_train, y_train)
 
-    def order(self, signal: str) -> None:
+    def set_lot_size(self) -> float:
+        """Get from History Orders. If the last History Order was a loss, double the lot size in the next trade."""
+        to_date = datetime.now()
+        from_date = to_date - timedelta(days=4)
+        logger.debug(
+            f"!!!CHECKING HISTORY DEALS BETWEEN {from_date} AND {to_date} FOR {self.pair}!!!"
+        )
+        history_deals = mt5.history_deals_get(
+            from_date, to_date, group=self.pair
+        )
+        if history_deals is None:
+            logger.debug(
+                f"No history orders with this pair: {self.pair}. Error code = {mt5.last_error()}"
+            )
+            return self.lot
+        elif len(history_deals) > 0:
+            comment = history_deals[len(history_deals) - 1].comment
+            if "tp" in comment or "sl" not in comment:
+                return self.lot
+            traded_volume = history_deals[len(history_deals) - 1].volume
+            return traded_volume + traded_volume
+        else:
+            logger.debug(f"Something went wrong. Error: {mt5.last_error()}")
+        return self.lot
+
+    def order(self, signal: str) -> bool:
         """Depending on the param signal, this will place an order for BUY or SELL"""
         symbol_info = mt5.symbol_info(self.pair)
         if symbol_info is None:
@@ -137,27 +188,12 @@ class Client:
                 mt5.shutdown()
                 quit()
         symbol_info_tick = mt5.symbol_info_tick(self.pair)
-        # logger.debug(
-        #     f"{self.pair}'s Point: {symbol_info.point}"
-        # )
-        # logger.debug(
-        #     f"{self.pair}'s Ask Price: {symbol_info_tick.ask}"
-        # )
-        # logger.debug(
-        #     f"{self.pair}'s Ask Price with Point: {symbol_info_tick.ask*symbol_info.point}"
-        # )
-        # logger.debug(
-        #     f"{self.pair}'s Bid Price: {symbol_info_tick.bid}"
-        # )
-        # logger.debug(
-        #     f"{self.pair}'s Bid Price with Point: {symbol_info_tick.bid*symbol_info.point}"
-        # )
         order_type, price = (
             (mt5.ORDER_TYPE_SELL, symbol_info_tick.bid)
             if signal == "sell"
             else (mt5.ORDER_TYPE_BUY, symbol_info_tick.ask)
         )
-        # TODO: get history order of the pair and if it hit a stop loss, increment lot size by double, else, remain as is.
+        self.lot = self.set_lot_size()
         self.raw_order(
             action=mt5.TRADE_ACTION_DEAL,
             symbol=self.pair,
@@ -165,7 +201,7 @@ class Client:
             type=order_type,
             price=price,
             tp=float(self.y_predict[0]),
-            # sl=float(self.stop_loss),
+            sl=float(self.stop_loss),
             deviation=20,
             magic=20210927,
             comment=config.COMMENT,
@@ -175,6 +211,7 @@ class Client:
         logger.debug(
             f"Order Sent : by {self.pair} {self.lot} lots at {price} with deviation 20 points"
         )
+        return True
 
     def raw_order(self, **kwargs):
         """Sends the order from kwargs returns the result dictionary"""
@@ -188,6 +225,7 @@ class Client:
             )
         else:
             logger.info(f"Order send done. Result: {result}")
+        logger.debug(f"Result Type: {type(result)}")
         return result
 
     def check_existing_positions(self) -> bool:
@@ -218,13 +256,7 @@ def main() -> None:
                 config.TIMEFRAME,
             )
             if c.login() and c.check_existing_positions():
-                c.analyze_and_trade(rates=None)
-            # if c.login():
-            #     from datetime import datetime
-            #     from_date=datetime(2021,9,30)
-            #     to_date=datetime.now()
-            #     history_orders = mt5.history_orders_get(from_date, to_date, group=p)
-            #     print(history_orders)
+                c.analyze_and_trade()
 
 
 if __name__ == "__main__":
