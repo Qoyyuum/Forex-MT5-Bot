@@ -152,9 +152,7 @@ class Client:
         """Get from History Orders. If the last History Order was a loss, double the lot size in the next trade."""
         to_date = datetime.now()
         from_date = to_date - timedelta(days=4)
-        logger.debug(
-            f"!!!CHECKING HISTORY DEALS BETWEEN {from_date} AND {to_date} FOR {self.pair}!!!"
-        )
+        logger.debug(f"!!!CHECKING HISTORY DEALS FOR {self.pair}!!!")
         history_deals = mt5.history_deals_get(
             from_date, to_date, group=self.pair
         )
@@ -237,7 +235,7 @@ class Client:
         logger.debug(f"Checking pair: {self.pair}")
         pos = mt5.positions_get(symbol=self.pair)
         logger.debug(f"{pos}")
-        return pos is None or len(pos) == 0
+        return pos is None or len(pos) == config.NO_CONCURRENT_TRADES
 
 
 def main() -> None:

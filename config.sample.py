@@ -20,3 +20,4 @@ TIMEFRAME_TO_TRADE = mt5.TIMEFRAME_M30
 BARS_TO_TRAIN = 4500
 COMMENT = "Trading Bot v1"
 DEBUG = False
+NO_CONCURRENT_TRADES = 0  # 0 to always maintain 1 concurrent trade
