@@ -21,3 +21,10 @@ Then run,
 This repo utilises [pre-commit](https://pre-commit.com/) and manages package management with `pipenv`.
 
 To set up the dev environment, `pipenv install -d` and `pre-commit install`.
+
+## TODO
+
+- [] Get a working docker container of MT5 running
+- [] Have the local `app.py` file point to the running MT5 docker container instance
+- [] Containerize `app.py` while pointing to the running MT5 docker container instance
+- [] Add cron job to execute `app.py` container while pointing to the running MT5 docker container instance
