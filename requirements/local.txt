@@ -45,7 +45,7 @@ platformdirs==2.3.0
 pluggy==0.13.1
 prompt-toolkit==3.0.20
 py==1.10.0
-Pygments==2.10.0
+Pygments==2.15.0
 pylint==2.6.0
 pyparsing==2.4.7
 pytest==5.4.3
