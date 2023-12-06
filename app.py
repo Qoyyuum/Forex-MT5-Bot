@@ -41,12 +41,37 @@ class Client:
             )
             return False
 
-    def analyze_and_trade(self):
-        """Analyze the past 100 rates and trade on the current open price"""
-        rates = mt5.copy_rates_from_pos(self.pair, self.timeframe, 1, 100)
+    def get_all_data(self):
+        """Get all data and save it as CSV file in local directory"""
+        rates = mt5.copy_rates_from_pos(self.pair, self.timeframe, 0, 9999)
+        df = pd.DataFrame(rates)
+        df.to_csv(f"{self.pair}.csv")
+        return rates
+
+    def analyze_and_trade(self, data=None):
+        """Analyze the past 100 rates and trade on the current open price.
+        @param data - number of rates to fetch from the past"""
+        if data is None:
+            rates = self.get_all_data()
+        else:
+            rates = mt5.copy_rates_from_pos(self.pair, self.timeframe, 1, data)
         logger.debug(f"Fetched rates for {self.pair} :\n{rates}")
 
         df_data = pd.DataFrame(rates)
+        # From df_data, make a new column called the next close price. The next close price will show the maximum or minimum close price in the next 100 rates.
+        df_data["next_close_price"] = (
+            df_data["close"]
+            .rolling(100)
+            .apply(
+                lambda x: max(x)
+                if x[0] == x.max()
+                else min(x)
+                if x[0] == x.min()
+                else None,
+                raw=True,
+            )
+        )
+        print(df_data.tail())
         df_x = df_data.drop(columns="close")
         df_y = df_data["close"]
 
@@ -180,13 +205,15 @@ def main():
                 config.TIMEFRAME,
             )
             if c.login() and c.check_existing_positions():
-                c.analyze_and_trade()
+                # c.analyze_and_trade()
+                c.get_all_data()
 
 
 if __name__ == "__main__":
-    while True:
-        try:
-            main()
-        except (KeyboardInterrupt, SystemExit):
-            logger.critical("Manually quit the program")
-            raise
+    # while True:
+    #     try:
+    #         main()
+    #     except (KeyboardInterrupt, SystemExit):
+    #         logger.critical("Manually quit the program")
+    #         raise
+    main()
