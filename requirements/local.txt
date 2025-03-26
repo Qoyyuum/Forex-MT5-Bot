@@ -64,7 +64,7 @@ tomli==1.2.1
 torch==1.13.1
 torchaudio==0.7.2
 torchvision==0.8.2+cpu
-tornado==6.1
+tornado==6.3.3
 tqdm==4.56.0
 traitlets==5.1.0
 typing-extensions==3.10.0.2
